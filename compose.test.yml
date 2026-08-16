@@ -1,0 +1,84 @@
+name: full-stack-fastapi-template-test
+
+x-backend-environment: &backend-environment
+  FASTAPI_ENV: development
+  PROJECT_NAME: RBAC Test
+  SECRET_KEY: test-secret-key-that-is-long-enough-for-local-tests
+  BOOTSTRAP_ADMIN_EMAIL: admin@example.com
+  BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD: Bootstrap-test-password-123!
+  DATABASE_URL: postgresql://postgres:test-db-password@db:5432/app_test
+  SMTP_HOST: mailcatcher
+  SMTP_PORT: "1025"
+  SMTP_TLS: "false"
+  EMAILS_FROM_EMAIL: test@example.com
+
+x-backend-service: &backend-service
+  image: backend-test:latest
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  depends_on:
+    db:
+      condition: service_healthy
+  environment: *backend-environment
+
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: app_test
+      POSTGRES_PASSWORD: test-db-password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    tmpfs:
+      - /var/lib/postgresql
+
+  mailcatcher:
+    image: schickling/mailcatcher
+
+  backend-tests:
+    <<: *backend-service
+    volumes:
+      - ./backend/tests:/app/backend/tests:ro
+      - ./backend/htmlcov:/app/backend/htmlcov
+    command: ["bash", "-c", "bash scripts/prestart.sh && bash scripts/test.sh"]
+
+  backend:
+    <<: *backend-service
+    depends_on:
+      db:
+        condition: service_healthy
+      mailcatcher:
+        condition: service_started
+    command:
+      ["bash", "-c", "bash scripts/prestart.sh && fastapi run --host 0.0.0.0"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  playwright:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.playwright
+    ipc: host
+    depends_on:
+      backend:
+        condition: service_healthy
+      mailcatcher:
+        condition: service_started
+    environment:
+      BOOTSTRAP_ADMIN_EMAIL: admin@example.com
+      BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD: Bootstrap-test-password-123!
+      E2E_ADMIN_PASSWORD: Admin-test-password-123!
+      PLAYWRIGHT_BASE_URL: http://backend:8000
+      VITE_API_URL: http://backend:8000
+      MAILCATCHER_HOST: http://mailcatcher:1080
+      CI: "true"
+    volumes:
+      - ./frontend/blob-report:/app/frontend/blob-report
+      - ./frontend/test-results:/app/frontend/test-results

@@ -45,8 +45,8 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          FIRST_SUPERUSER: ${{ vars.FIRST_SUPERUSER }}
-          FIRST_SUPERUSER_PASSWORD: ${{ secrets.FIRST_SUPERUSER_PASSWORD }}
+          BOOTSTRAP_ADMIN_EMAIL: ${{ vars.BOOTSTRAP_ADMIN_EMAIL }}
+          BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD: ${{ secrets.BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD }}
       - name: Deploy to FastAPI Cloud
         run: uv run fastapi deploy
         env:

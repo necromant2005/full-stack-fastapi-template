@@ -93,31 +93,20 @@ The frontend code is structured as follows:
 
 ## End-to-End Testing with Playwright
 
-The frontend includes initial end-to-end tests using Playwright. To run the tests, you need to have the Docker Compose stack running. Start the stack with the following command:
+Run Playwright with an isolated backend and disposable PostgreSQL database from the
+project root:
 
 ```bash
-docker compose run --rm backend bash scripts/prestart.sh
-docker compose up -d --wait backend
+bash scripts/test-e2e.sh
 ```
 
-Then, you can run the tests with the following command:
-
-```bash
-bunx playwright test
-```
-
-You can also run your tests in UI mode to see the browser and interact with it running:
+For interactive UI mode, use the host development workflow and then run:
 
 ```bash
 bunx playwright test --ui
 ```
 
-To stop and remove the Docker Compose stack and clean the data created in tests, use the following command:
-
-```bash
-docker compose down -v
-```
-
-To update the tests, navigate to the tests directory and modify the existing test files or add new ones as needed.
+The script always removes its test containers and data volume. To update tests,
+modify files under `frontend/tests`.
 
 For more information on writing and running Playwright tests, refer to the official [Playwright documentation](https://playwright.dev/docs/intro).

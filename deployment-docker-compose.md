@@ -20,12 +20,12 @@ The `--filter=":- .gitignore"` option tells `rsync` to use the same ignore rules
 
 ### Environment Variables
 
-Set the application domain, project name, and first superuser email:
+Set the application domain, project name, and bootstrap administrator email:
 
 ```bash
 export DOMAIN=fastapi-project.example.com
 export PROJECT_NAME="Full Stack FastAPI Project"
-export FIRST_SUPERUSER=admin@example.com
+export BOOTSTRAP_ADMIN_EMAIL=admin@example.com
 ```
 
 You can also configure these environment variables as needed:
@@ -37,15 +37,19 @@ You can also configure these environment variables as needed:
 
 ### Secrets
 
-Generate and set secure values for the database password, token signing key, and first superuser password:
+Generate and set secure values for the database password, token signing key, and bootstrap administrator temporary password:
 
 ```bash
 export POSTGRES_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export FIRST_SUPERUSER_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 ```
 
 To use an authenticated email provider, also set `SMTP_PASSWORD`.
+
+The bootstrap credentials are consumed only when no administrator exists. The
+administrator must replace the temporary password at first login. The bootstrap
+variables may then be removed without affecting later restarts or deployments.
 
 ## Deploy
 
@@ -72,7 +76,7 @@ In the repository, go to **Settings** > **Secrets and variables** > **Actions** 
 
 * `DOMAIN`
 * `PROJECT_NAME`
-* `FIRST_SUPERUSER`
+* `BOOTSTRAP_ADMIN_EMAIL`
 
 To enable emails, add these optional repository variables:
 
@@ -86,7 +90,7 @@ Add these repository secrets:
 
 * `POSTGRES_PASSWORD`
 * `SECRET_KEY`
-* `FIRST_SUPERUSER_PASSWORD`
+* `BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD`
 
 To use an authenticated email provider, add the optional `SMTP_PASSWORD` repository secret.
 

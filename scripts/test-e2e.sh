@@ -10,4 +10,6 @@ cleanup() {
 
 trap cleanup EXIT
 cleanup
-"${compose[@]}" run --rm --build backend-tests
+"${compose[@]}" up -d --build --wait backend mailcatcher
+"${compose[@]}" run --rm --build playwright \
+    bunx playwright test --fail-on-flaky-tests "$@"

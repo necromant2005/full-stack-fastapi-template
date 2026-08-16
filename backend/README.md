@@ -70,21 +70,17 @@ The tests run with Pytest. Modify existing tests or add new ones in `./backend/t
 
 If you use GitHub Actions, the tests will run automatically.
 
-### Test a Running Stack
+### Test with Docker
 
-If your stack is already up and you just want to run the tests, you can use:
-
-```bash
-docker compose exec backend bash scripts/tests-start.sh
-```
-
-The `/app/backend/scripts/tests-start.sh` script calls `pytest` after making sure that the rest of the stack is running. If you need to pass extra arguments to `pytest`, you can pass them to that command and they will be forwarded.
-
-For example, to stop on first error:
+From the project root, run the tests against the disposable PostgreSQL service:
 
 ```bash
-docker compose exec backend bash scripts/tests-start.sh -x
+bash scripts/test.sh
 ```
+
+This command does not use or modify the development database. It builds the
+backend, applies migrations to an isolated database, runs Pytest, and removes the
+temporary containers and volume.
 
 ### Test Coverage
 
