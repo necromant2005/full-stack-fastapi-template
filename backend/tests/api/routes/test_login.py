@@ -1,5 +1,7 @@
+import logging
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 from pwdlib.hashers.bcrypt import BcryptHasher
 from sqlmodel import Session
@@ -7,7 +9,7 @@ from sqlmodel import Session
 from app.core.config import settings
 from app.core.security import get_password_hash, verify_password
 from app.crud import create_user
-from app.models import User, UserCreate
+from app.models import User, UserCreate, UserRole
 from app.utils import generate_password_reset_token
 from tests.utils.user import user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
@@ -15,8 +17,8 @@ from tests.utils.utils import random_email, random_lower_string
 
 def test_get_access_token(client: TestClient) -> None:
     login_data = {
-        "username": settings.FIRST_SUPERUSER,
-        "password": settings.FIRST_SUPERUSER_PASSWORD,
+        "username": settings.BOOTSTRAP_ADMIN_EMAIL,
+        "password": settings.BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD,
     }
     r = client.post(f"{settings.API_V1_STR}/login/access-token", data=login_data)
     tokens = r.json()
@@ -27,7 +29,7 @@ def test_get_access_token(client: TestClient) -> None:
 
 def test_get_access_token_incorrect_password(client: TestClient) -> None:
     login_data = {
-        "username": settings.FIRST_SUPERUSER,
+        "username": settings.BOOTSTRAP_ADMIN_EMAIL,
         "password": "incorrect",
     }
     r = client.post(f"{settings.API_V1_STR}/login/access-token", data=login_data)
@@ -35,15 +37,63 @@ def test_get_access_token_incorrect_password(client: TestClient) -> None:
 
 
 def test_use_access_token(
-    client: TestClient, superuser_token_headers: dict[str, str]
+    client: TestClient, admin_token_headers: dict[str, str]
 ) -> None:
     r = client.post(
         f"{settings.API_V1_STR}/login/test-token",
-        headers=superuser_token_headers,
+        headers=admin_token_headers,
     )
     result = r.json()
     assert r.status_code == 200
     assert "email" in result
+
+
+def test_invalid_access_token_returns_bearer_challenge(client: TestClient) -> None:
+    response = client.post(
+        f"{settings.API_V1_STR}/login/test-token",
+        headers={"Authorization": "Bearer invalid-token"},
+    )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_inactive_user_returns_forbidden(client: TestClient, db: Session) -> None:
+    email = random_email()
+    password = random_lower_string()
+    user = create_user(
+        session=db,
+        user_create=UserCreate(email=email, password=password, role=UserRole.member),
+    )
+    headers = user_authentication_headers(client=client, email=email, password=password)
+    user.is_active = False
+    db.add(user)
+    db.commit()
+
+    response = client.post(
+        f"{settings.API_V1_STR}/login/test-token",
+        headers=headers,
+    )
+
+    assert response.status_code == 403
+
+
+def test_authorization_denial_is_logged_without_credentials(
+    client: TestClient,
+    normal_user_token_headers: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        response = client.get(
+            f"{settings.API_V1_STR}/metrics/insights",
+            headers=normal_user_token_headers,
+        )
+
+    assert response.status_code == 403
+    message = caplog.messages[-1]
+    assert message == ("authorization_denied method=GET route=/api/v1/metrics/insights")
+    assert "Bearer" not in message
+    assert settings.EMAIL_TEST_USER not in message
 
 
 def test_recovery_password(
@@ -89,7 +139,7 @@ def test_reset_password(client: TestClient, db: Session) -> None:
         full_name="Test User",
         password=password,
         is_active=True,
-        is_superuser=False,
+        role=UserRole.member,
     )
     user = create_user(session=db, user_create=user_create)
     token = generate_password_reset_token(email=email)
@@ -111,12 +161,12 @@ def test_reset_password(client: TestClient, db: Session) -> None:
 
 
 def test_reset_password_invalid_token(
-    client: TestClient, superuser_token_headers: dict[str, str]
+    client: TestClient, admin_token_headers: dict[str, str]
 ) -> None:
     data = {"new_password": "changethis", "token": "invalid"}
     r = client.post(
         f"{settings.API_V1_STR}/reset-password/",
-        headers=superuser_token_headers,
+        headers=admin_token_headers,
         json=data,
     )
     response = r.json()

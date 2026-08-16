@@ -62,8 +62,8 @@ class Settings(BaseSettings):
         return bool(self.SMTP_HOST and self.EMAILS_FROM_EMAIL)
 
     EMAIL_TEST_USER: EmailStr = "test@example.com"
-    FIRST_SUPERUSER: EmailStr
-    FIRST_SUPERUSER_PASSWORD: str
+    BOOTSTRAP_ADMIN_EMAIL: EmailStr | None = None
+    BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD: str | None = None
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
@@ -81,9 +81,22 @@ class Settings(BaseSettings):
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
         for host in self.DATABASE_URL.hosts():
             self._check_default_secret("DATABASE_URL password", host["password"])
-        self._check_default_secret(
-            "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
-        )
+        if bool(self.BOOTSTRAP_ADMIN_EMAIL) != bool(
+            self.BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD
+        ):
+            raise ValueError(
+                "BOOTSTRAP_ADMIN_EMAIL and "
+                "BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD must be set together"
+            )
+        if self.BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD:
+            if len(self.BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD) < 8:
+                raise ValueError(
+                    "BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD must contain at least 8 characters"
+                )
+            self._check_default_secret(
+                "BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD",
+                self.BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD,
+            )
 
         return self
 
