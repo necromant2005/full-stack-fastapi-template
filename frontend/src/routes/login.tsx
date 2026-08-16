@@ -8,6 +8,7 @@ import { useForm } from "react-hook-form"
 import { z } from "zod"
 
 import type { Body_login_login_access_token as AccessToken } from "@/client"
+import { UsersService } from "@/client"
 import { AuthLayout } from "@/components/Common/AuthLayout"
 import {
   Form,
@@ -36,9 +37,15 @@ export const Route = createFileRoute("/login")({
   component: Login,
   beforeLoad: async () => {
     if (isLoggedIn()) {
-      throw redirect({
-        to: "/",
-      })
+      let destination: "/" | "/change-password"
+      try {
+        const { data: user } = await UsersService.readUserMe()
+        destination = user.must_change_password ? "/change-password" : "/"
+      } catch {
+        localStorage.removeItem("access_token")
+        return
+      }
+      throw redirect({ to: destination })
     }
   },
   head: () => ({

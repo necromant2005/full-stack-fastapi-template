@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 
@@ -38,7 +38,12 @@ const formSchema = z
 
 type FormData = z.infer<typeof formSchema>
 
-const ChangePassword = () => {
+interface ChangePasswordProps {
+  onSuccess?: () => void
+}
+
+const ChangePassword = ({ onSuccess }: ChangePasswordProps) => {
+  const queryClient = useQueryClient()
   const { showSuccessToast, showErrorToast } = useCustomToast()
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -54,9 +59,11 @@ const ChangePassword = () => {
   const mutation = useMutation({
     mutationFn: (data: UpdatePassword) =>
       UsersService.updatePasswordMe({ body: data }),
-    onSuccess: () => {
+    onSuccess: async () => {
       showSuccessToast("Password updated successfully")
       form.reset()
+      await queryClient.invalidateQueries({ queryKey: ["currentUser"] })
+      onSuccess?.()
     },
     onError: handleError.bind(showErrorToast),
   })

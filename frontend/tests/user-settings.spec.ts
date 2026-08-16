@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { firstSuperuser, firstSuperuserPassword } from "./config.ts"
+import { adminPassword, bootstrapAdminEmail } from "./config.ts"
 import { createUser } from "./utils/privateApi.ts"
 import { randomEmail, randomPassword } from "./utils/random"
 import { logInUser, logOutUser } from "./utils/user"
@@ -247,7 +247,7 @@ test("Selected mode is preserved across sessions", async ({ page }) => {
   expect(isDarkMode).toBe(true)
 
   await logOutUser(page)
-  await logInUser(page, firstSuperuser, firstSuperuserPassword)
+  await logInUser(page, bootstrapAdminEmail, adminPassword)
 
   isDarkMode = await page.evaluate(() =>
     document.documentElement.classList.contains("dark"),

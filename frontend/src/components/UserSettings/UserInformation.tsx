@@ -1,10 +1,14 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 
-import { UsersService, type UserUpdateMe } from "@/client"
+import {
+  type CurrentUserPublic,
+  UsersService,
+  type UserUpdateMe,
+} from "@/client"
 import { Button } from "@/components/ui/button"
 import {
   Form,
@@ -44,16 +48,25 @@ const UserInformation = () => {
     },
   })
 
-  const toggleEditMode = () => {
-    setEditMode(!editMode)
-  }
+  useEffect(() => {
+    if (currentUser && !editMode) {
+      form.reset({
+        full_name: currentUser.full_name ?? undefined,
+        email: currentUser.email,
+      })
+    }
+  }, [currentUser, editMode, form])
 
   const mutation = useMutation({
     mutationFn: (data: UserUpdateMe) =>
       UsersService.updateUserMe({ body: data }),
-    onSuccess: () => {
+    onSuccess: (response) => {
+      queryClient.setQueryData<CurrentUserPublic>(
+        ["currentUser"],
+        (user) => user && { ...user, ...response.data },
+      )
       showSuccessToast("User updated successfully")
-      toggleEditMode()
+      setEditMode(false)
     },
     onError: handleError.bind(showErrorToast),
     onSettled: () => {
@@ -76,8 +89,11 @@ const UserInformation = () => {
   }
 
   const onCancel = () => {
-    form.reset()
-    toggleEditMode()
+    form.reset({
+      full_name: currentUser?.full_name ?? undefined,
+      email: currentUser?.email ?? "",
+    })
+    setEditMode(false)
   }
 
   return (
@@ -157,7 +173,7 @@ const UserInformation = () => {
                 </Button>
               </>
             ) : (
-              <Button type="button" onClick={toggleEditMode}>
+              <Button type="button" onClick={() => setEditMode(true)}>
                 Edit
               </Button>
             )}

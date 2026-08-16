@@ -15,5 +15,9 @@ function getEnvVar(name: string): string {
   return value
 }
 
-export const firstSuperuser = getEnvVar("FIRST_SUPERUSER")
-export const firstSuperuserPassword = getEnvVar("FIRST_SUPERUSER_PASSWORD")
+export const bootstrapAdminEmail = getEnvVar("BOOTSTRAP_ADMIN_EMAIL")
+export const bootstrapAdminTemporaryPassword = getEnvVar(
+  "BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD",
+)
+export const adminPassword =
+  process.env.E2E_ADMIN_PASSWORD ?? "Admin-test-password-123!"

@@ -3,8 +3,9 @@ import { useNavigate } from "@tanstack/react-router"
 
 import {
   type Body_login_login_access_token as AccessToken,
+  type CurrentUserPublic,
   LoginService,
-  type UserPublic,
+  type Permission,
   type UserRegister,
   UsersService,
 } from "@/client"
@@ -20,7 +21,7 @@ const useAuth = () => {
   const queryClient = useQueryClient()
   const { showErrorToast } = useCustomToast()
 
-  const { data: user } = useQuery<UserPublic | null, Error>({
+  const { data: user } = useQuery<CurrentUserPublic | null, Error>({
     queryKey: ["currentUser"],
     queryFn: async () => (await UsersService.readUserMe()).data,
     enabled: isLoggedIn(),
@@ -43,18 +44,24 @@ const useAuth = () => {
       body: data,
     })
     localStorage.setItem("access_token", response.data.access_token)
+    const currentUser = (await UsersService.readUserMe()).data
+    queryClient.setQueryData(["currentUser"], currentUser)
+    return currentUser
   }
 
   const loginMutation = useMutation({
     mutationFn: login,
-    onSuccess: () => {
-      navigate({ to: "/" })
+    onSuccess: (currentUser) => {
+      navigate({
+        to: currentUser.must_change_password ? "/change-password" : "/",
+      })
     },
     onError: handleError.bind(showErrorToast),
   })
 
   const logout = () => {
     localStorage.removeItem("access_token")
+    queryClient.removeQueries({ queryKey: ["currentUser"] })
     navigate({ to: "/login" })
   }
 
@@ -63,6 +70,8 @@ const useAuth = () => {
     loginMutation,
     logout,
     user,
+    can: (permission: Permission) =>
+      user?.permissions.includes(permission) ?? false,
   }
 }
 

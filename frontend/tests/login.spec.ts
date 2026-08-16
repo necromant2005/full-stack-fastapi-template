@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test"
-import { firstSuperuser, firstSuperuserPassword } from "./config.ts"
+import { adminPassword, bootstrapAdminEmail } from "./config.ts"
 import { randomPassword } from "./utils/random.ts"
 
 test.use({ storageState: { cookies: [], origins: [] } })
@@ -40,7 +40,7 @@ test("Forgot Password link is visible", async ({ page }) => {
 test("Log in with valid email and password ", async ({ page }) => {
   await page.goto("/login")
 
-  await fillForm(page, firstSuperuser, firstSuperuserPassword)
+  await fillForm(page, bootstrapAdminEmail, adminPassword)
   await page.getByRole("button", { name: "Log In" }).click()
 
   await page.waitForURL("/")
@@ -50,10 +50,39 @@ test("Log in with valid email and password ", async ({ page }) => {
   ).toBeVisible()
 })
 
+test("Temporary password must be replaced before entering the app", async ({
+  page,
+  request,
+}) => {
+  const email = `temporary-${Date.now()}@example.com`
+  const temporaryPassword = randomPassword()
+  const newPassword = randomPassword()
+  const loginResponse = await request.post("/api/v1/login/access-token", {
+    form: { username: bootstrapAdminEmail, password: adminPassword },
+  })
+  const { access_token: accessToken } = await loginResponse.json()
+  const createResponse = await request.post("/api/v1/users/", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    data: { email, password: temporaryPassword, role: "member" },
+  })
+  expect(createResponse.ok()).toBeTruthy()
+
+  await page.goto("/login")
+  await fillForm(page, email, temporaryPassword)
+  await page.getByRole("button", { name: "Log In" }).click()
+  await page.waitForURL("/change-password")
+
+  await page.getByTestId("current-password-input").fill(temporaryPassword)
+  await page.getByTestId("new-password-input").fill(newPassword)
+  await page.getByTestId("confirm-password-input").fill(newPassword)
+  await page.getByRole("button", { name: "Update Password" }).click()
+  await page.waitForURL("/")
+})
+
 test("Log in with invalid email", async ({ page }) => {
   await page.goto("/login")
 
-  await fillForm(page, "invalidemail", firstSuperuserPassword)
+  await fillForm(page, "invalidemail", adminPassword)
   await page.getByRole("button", { name: "Log In" }).click()
 
   await expect(page.getByText("Invalid email address")).toBeVisible()
@@ -63,7 +92,7 @@ test("Log in with invalid password", async ({ page }) => {
   const password = randomPassword()
 
   await page.goto("/login")
-  await fillForm(page, firstSuperuser, password)
+  await fillForm(page, bootstrapAdminEmail, password)
   await page.getByRole("button", { name: "Log In" }).click()
 
   await expect(page.getByText("Incorrect email or password")).toBeVisible()
@@ -72,7 +101,7 @@ test("Log in with invalid password", async ({ page }) => {
 test("Successful log out", async ({ page }) => {
   await page.goto("/login")
 
-  await fillForm(page, firstSuperuser, firstSuperuserPassword)
+  await fillForm(page, bootstrapAdminEmail, adminPassword)
   await page.getByRole("button", { name: "Log In" }).click()
 
   await page.waitForURL("/")
@@ -89,7 +118,7 @@ test("Successful log out", async ({ page }) => {
 test("Logged-out user cannot access protected routes", async ({ page }) => {
   await page.goto("/login")
 
-  await fillForm(page, firstSuperuser, firstSuperuserPassword)
+  await fillForm(page, bootstrapAdminEmail, adminPassword)
   await page.getByRole("button", { name: "Log In" }).click()
 
   await page.waitForURL("/")
