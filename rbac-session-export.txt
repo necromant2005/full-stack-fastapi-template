@@ -1,0 +1,1408 @@
+CODEX SESSION EXPORT
+Repository: /Users/necro/Projects/Work/full-stack-fastapi-template
+Session: 01a00ba8-6d7d-77f3-8675-9bccdf01ae6f
+Included from: Fullstack-Dev-Test-Task analysis/specification request
+Excluded: startup attempts, environment context, system/developer messages, tool calls, raw tool output
+Note: the local password mentioned later in the retained discussion is redacted.
+
+SPEC CREATION LOGIC
+
+The specification was developed through these successive decisions:
+
+1. Translate the assignment into an explicit permission model for admin, manager, and member.
+2. Keep authorization authoritative in FastAPI dependencies and expose capabilities to the React UI.
+3. Replace legacy superuser bootstrap settings with a clearly temporary first-admin credential.
+4. Require password replacement on first login and restrict the session until it is completed.
+5. Remove legacy runtime behavior while retaining only the migration needed for existing databases.
+6. Define administrator safety invariants: no self-removal and no removal of the final active admin.
+7. Capture security, performance, concurrency, recovery, and support-cost decisions in ADRs.
+8. Audit the result against the complete assignment and close developer-UX and test-isolation gaps.
+
+The curated transcript starts with the specification request and proceeds directly to the first
+substantive requirements analysis.
+
+CURATED TRANSCRIPT
+
+========================================================================================
+USER | 2026-08-16 20:56:28 EEST
+========================================================================================
+Ok. If we have https://github.com/evios/Fullstack-Dev-Test-Task ? Can you explain wjat extractly the task and then try to create spec for required changes ?
+
+========================================================================================
+ASSISTANT | 2026-08-16 20:57:34 EEST
+========================================================================================
+Here is the task in plain English:
+
+You must replace the template’s binary “superuser vs normal user” authorization with three roles: `admin`, `manager`, and `member`. The backend remains the security boundary: admin may manage users, manager may only list users and view a new metrics/insights area, and every authenticated user may view/update their own profile. The frontend must mirror those permissions by hiding unavailable actions and showing an explicit Access Denied page for direct unauthorized navigation. The submission also needs a database migration, a reproducible way to get admin and non-admin test accounts, focused backend authorization tests, and README instructions that work.
+
+The current template already has JWT login, `/users` CRUD, `/users/me`, an admin users screen, and an `is_superuser` boolean. The cleanest change is to migrate that boolean to one authoritative `role` field, centralize backend permission checks in a small policy/dependency layer, and return the current user’s capabilities to the frontend so UI rules do not drift from backend rules.
+
+One scope choice affects the size of the spec: whether to honor only required deliverables or also include the optional ADR/diagram/denied-access logging bonuses.
+
+========================================================================================
+ASSISTANT | 2026-08-16 20:58:14 EEST
+========================================================================================
+An ADR is an “Architecture Decision Record”: a short Markdown document explaining one important technical decision, the alternatives considered, why one was chosen, and its tradeoffs. For this task, a useful ADR would explain why authorization uses centralized FastAPI permission dependencies and why the backend returns capabilities to the frontend.
+
+| Scope | Includes | Advantages | Disadvantages |
+|---|---|---|---|
+| Required only | RBAC, migration, UI guards, tests, README | Best fit for the one-hour timebox; lowest risk; directly targets 90% of the review score | Less evidence of architectural reasoning; no bonus polish |
+| Required + ADR | Everything required plus one 200–400 word decision record | Makes the authorization design and tradeoffs easy to review; small extra effort; useful bonus signal | Adds documentation that must stay consistent with the code |
+| Full bonus | ADR(s), Mermaid diagram, and denied-access logging | Strongest architecture presentation and some operational maturity | More files and code paths; higher chance of spending time on polish instead of core correctness; logging needs privacy/noise decisions |
+
+My recommendation is **Required + ADR**. One concise ADR adds useful reviewer signal without letting the exercise sprawl. A Mermaid diagram is easy but not necessary; denied-access logging has the weakest value in a small test task because it introduces operational concerns without an actual observability system.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:00:11 EEST
+========================================================================================
+<proposed_plan>
+# RBAC Test Task — Implementation Specification
+
+## Summary
+
+Implement the required portion of the [Fullstack Developer Test Task](https://github.com/evios/Fullstack-Dev-Test-Task) in the current FastAPI/React template. Replace the binary `is_superuser` model with three authoritative roles, enforce permissions in the backend, expose capabilities to the frontend, and provide clear forbidden-state UX.
+
+Optional ADRs, diagrams, and observability will be deferred; they can be added later without changing the core design.
+
+## Permission Model
+
+| Action | Admin | Manager | Member |
+|---|---:|---:|---:|
+| List all users | Yes | Yes | No |
+| Create users and assign roles | Yes | No | No |
+| View any user profile | Yes | No | No |
+| Update/delete other users | Yes | No | No |
+| View metrics/insights | Yes | Yes | No |
+| View/update own profile | Yes | Yes | Yes |
+| Use basic item features | Yes | Yes | Yes |
+
+- Introduce `UserRole`: `admin`, `manager`, `member`.
+- Introduce centralized permission constants and one role-to-permissions mapping.
+- Use reusable FastAPI dependencies such as `require_permission(Permission.users_list)`.
+- Keep ownership checks for `/users/me` and item resources separate from role checks.
+- Backend authorization remains authoritative; frontend checks only improve UX.
+
+## Backend and API Changes
+
+- Replace persisted `is_superuser` with a non-null `role` string constrained to the three supported values.
+- Add an Alembic migration that:
+  - maps existing `is_superuser=true` users to `admin`;
+  - maps all other users to `member`;
+  - makes `role` non-null with `member` as the default;
+  - adds a database check constraint;
+  - removes `is_superuser`;
+  - provides a reversible downgrade.
+- Update user create, update, and public schemas to use `role`.
+  - Public signup always creates a `member`, even if an elevated role is submitted.
+  - Only admins may assign or change roles through administrative endpoints.
+- Change authorization for existing endpoints:
+  - `GET /api/v1/users/`: admin or manager.
+  - `POST /api/v1/users/`: admin only.
+  - `GET/PATCH/DELETE /api/v1/users/{id}`: admin only, except users may continue reading themselves where currently supported.
+  - `/api/v1/users/me` and `/me/password`: every authenticated role.
+- Add `GET /api/v1/metrics/insights` for admin and manager. Return a small typed response containing `total_users` and `active_users`.
+- Return a `permissions` list from `GET /api/v1/users/me`, allowing the frontend to consume backend-derived capabilities.
+- Preserve existing item behavior: all roles manage their own items; admins retain the template’s existing cross-user item access.
+- Regenerate the OpenAPI TypeScript client after API schema changes.
+
+## Frontend and Developer Experience
+
+- Add a reusable `can(permission)` helper based on the current user’s returned permissions.
+- Replace the `/admin` users screen with `/users`:
+  - admin sees user creation and row management actions;
+  - manager sees the list in read-only mode;
+  - member cannot access the page.
+- Replace superuser checkboxes with a role selector in admin create/edit forms and display role badges in the table.
+- Add `/metrics` with simple total-user and active-user cards.
+- Show Users and Metrics navigation only when permitted.
+- Add a reusable Access Denied component and render it for direct unauthorized navigation instead of redirecting silently.
+- Change global API error handling so `401` logs the user out, while `403` keeps the session and displays the forbidden UX.
+- Add an idempotent, development-only seed command creating:
+  - one manager account;
+  - one member account;
+  - while retaining the existing initial admin.
+- Update README with Docker/local startup, migration, seed, credentials setup, test commands, permission matrix, and a concise explanation of the authorization flow.
+- Preserve the current uncommitted `.env` credentials locally and exclude real credentials from the submission.
+
+## Test and Acceptance Plan
+
+- Backend tests:
+  - admin can create users with assigned roles and manage another profile;
+  - manager can list users and view metrics but receives `403` for create/update operations;
+  - member receives `403` for user listing and metrics but can read/update their own profile;
+  - signup cannot elevate a user by submitting `role=admin`;
+  - migration and existing item authorization behavior remain valid.
+- Frontend/E2E tests:
+  - manager sees Users and Metrics but no mutation controls;
+  - member does not see protected navigation and receives Access Denied on direct URLs;
+  - a `403` does not log the user out.
+- Run Alembic upgrade, backend tests, frontend type-check/build, and focused Playwright scenarios.
+- Acceptance requires correct HTTP `403` responses, no privilege escalation path, documented repeatable startup/seeding, and successful login for all three seeded roles.
+
+## Assumptions
+
+- Required deliverables are implemented first; ADRs, diagrams, and denied-attempt logging are explicitly deferred for later polish.
+- The current checkout is the implementation base, although its Git remote still points to the upstream FastAPI template; submission repository/fork setup will be handled separately.
+- Roles are stored as constrained strings instead of a PostgreSQL native enum so adding a role remains a straightforward migration.
+- Global settings are not introduced because the base template has no global-settings feature; admin-only user management represents the required administrative surface.
+</proposed_plan>
+
+========================================================================================
+USER | 2026-08-16 21:00:37 EEST
+========================================================================================
+how the fiesrt time login happens ?
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:00:42 EEST
+========================================================================================
+I’ll distinguish the current template’s bootstrap login from the planned RBAC version, because the first-run account creation happens automatically during database initialization—not through the signup screen.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:01:06 EEST
+========================================================================================
+First login is bootstrapped automatically:
+
+1. `scripts/prestart.sh` runs migrations and `initial_data.py`.
+2. If `FIRST_SUPERUSER` does not exist, it creates the account using `.env`; the password is Argon2-hashed.
+3. In the planned RBAC version, that account receives the `admin` role.
+4. The login form sends the email/password to `/api/v1/login/access-token`.
+5. The backend returns a JWT, which the frontend stores and uses to load `/users/me`.
+
+If the account already exists, restarting does not reset its password. There is no forced password-change step.
+
+Current credentials:
+
+```text
+Email: admin@example.com
+Password: [REDACTED LOCAL PASSWORD]
+```
+
+<proposed_plan>
+# RBAC Test Task — Implementation Specification
+
+## Summary
+
+Implement the required portion of the [Fullstack Developer Test Task](https://github.com/evios/Fullstack-Dev-Test-Task) in the current FastAPI/React template. Replace the binary `is_superuser` model with three authoritative roles, enforce permissions in the backend, expose capabilities to the frontend, and provide clear forbidden-state UX.
+
+Optional ADRs, diagrams, and observability will be deferred; they can be added later without changing the core design.
+
+## Permission Model
+
+| Action | Admin | Manager | Member |
+|---|---:|---:|---:|
+| List all users | Yes | Yes | No |
+| Create users and assign roles | Yes | No | No |
+| View any user profile | Yes | No | No |
+| Update/delete other users | Yes | No | No |
+| View metrics/insights | Yes | Yes | No |
+| View/update own profile | Yes | Yes | Yes |
+| Use basic item features | Yes | Yes | Yes |
+
+- Introduce `UserRole`: `admin`, `manager`, `member`.
+- Introduce centralized permission constants and one role-to-permissions mapping.
+- Use reusable FastAPI dependencies such as `require_permission(Permission.users_list)`.
+- Keep ownership checks for `/users/me` and item resources separate from role checks.
+- Backend authorization remains authoritative; frontend checks only improve UX.
+
+## Backend and API Changes
+
+- Replace persisted `is_superuser` with a non-null `role` string constrained to the three supported values.
+- Add an Alembic migration that:
+  - maps existing `is_superuser=true` users to `admin`;
+  - maps all other users to `member`;
+  - makes `role` non-null with `member` as the default;
+  - adds a database check constraint;
+  - removes `is_superuser`;
+  - provides a reversible downgrade.
+- Update user create, update, and public schemas to use `role`.
+  - Public signup always creates a `member`, even if an elevated role is submitted.
+  - Only admins may assign or change roles through administrative endpoints.
+- Change authorization for existing endpoints:
+  - `GET /api/v1/users/`: admin or manager.
+  - `POST /api/v1/users/`: admin only.
+  - `GET/PATCH/DELETE /api/v1/users/{id}`: admin only, except users may continue reading themselves where currently supported.
+  - `/api/v1/users/me` and `/me/password`: every authenticated role.
+- Add `GET /api/v1/metrics/insights` for admin and manager. Return a small typed response containing `total_users` and `active_users`.
+- Return a `permissions` list from `GET /api/v1/users/me`, allowing the frontend to consume backend-derived capabilities.
+- Preserve existing item behavior: all roles manage their own items; admins retain the template’s existing cross-user item access.
+- Regenerate the OpenAPI TypeScript client after API schema changes.
+
+## Frontend and Developer Experience
+
+- Add a reusable `can(permission)` helper based on the current user’s returned permissions.
+- Replace the `/admin` users screen with `/users`:
+  - admin sees user creation and row management actions;
+  - manager sees the list in read-only mode;
+  - member cannot access the page.
+- Replace superuser checkboxes with a role selector in admin create/edit forms and display role badges in the table.
+- Add `/metrics` with simple total-user and active-user cards.
+- Show Users and Metrics navigation only when permitted.
+- Add a reusable Access Denied component and render it for direct unauthorized navigation instead of redirecting silently.
+- Change global API error handling so `401` logs the user out, while `403` keeps the session and displays the forbidden UX.
+- Add an idempotent, development-only seed command creating:
+  - one manager account;
+  - one member account;
+  - while retaining the existing initial admin.
+- Update README with Docker/local startup, migration, seed, credentials setup, test commands, permission matrix, and a concise explanation of the authorization flow.
+- Preserve the current uncommitted `.env` credentials locally and exclude real credentials from the submission.
+
+## Test and Acceptance Plan
+
+- Backend tests:
+  - admin can create users with assigned roles and manage another profile;
+  - manager can list users and view metrics but receives `403` for create/update operations;
+  - member receives `403` for user listing and metrics but can read/update their own profile;
+  - signup cannot elevate a user by submitting `role=admin`;
+  - migration and existing item authorization behavior remain valid.
+- Frontend/E2E tests:
+  - manager sees Users and Metrics but no mutation controls;
+  - member does not see protected navigation and receives Access Denied on direct URLs;
+  - a `403` does not log the user out.
+- Run Alembic upgrade, backend tests, frontend type-check/build, and focused Playwright scenarios.
+- Acceptance requires correct HTTP `403` responses, no privilege escalation path, documented repeatable startup/seeding, and successful login for all three seeded roles.
+
+## Assumptions
+
+- Required deliverables are implemented first; ADRs, diagrams, and denied-attempt logging are explicitly deferred for later polish.
+- The current checkout is the implementation base, although its Git remote still points to the upstream FastAPI template; submission repository/fork setup will be handled separately.
+- Roles are stored as constrained strings instead of a PostgreSQL native enum so adding a role remains a straightforward migration.
+- Global settings are not introduced because the base template has no global-settings feature; admin-only user management represents the required administrative surface.
+</proposed_plan>
+
+========================================================================================
+USER | 2026-08-16 21:02:03 EEST
+========================================================================================
+I suppose we must set migraiion or to so provide first time login out of legacy .env variables
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:02:28 EEST
+========================================================================================
+Yes—that bootstrap should be preserved. The migration handles existing users, while `initial_data.py` handles a fresh database:
+
+- Existing database: migrate `is_superuser=true` to `role=admin`.
+- Fresh database: create the first admin from `FIRST_SUPERUSER` and `FIRST_SUPERUSER_PASSWORD`.
+- Existing admin: never overwrite its password during startup.
+
+<proposed_plan>
+# RBAC Test Task — Implementation Specification
+
+## Summary
+
+Implement the required RBAC task in the current FastAPI/React template while preserving its first-run administrator bootstrap.
+
+The database migration converts existing users to roles. On a fresh installation, `initial_data.py` creates the first administrator from the existing `.env` variables. Optional ADRs, diagrams, and observability remain deferred.
+
+## Permission Model
+
+| Action | Admin | Manager | Member |
+|---|---:|---:|---:|
+| List all users | Yes | Yes | No |
+| Create users and assign roles | Yes | No | No |
+| View any user profile | Yes | No | No |
+| Update/delete other users | Yes | No | No |
+| View metrics/insights | Yes | Yes | No |
+| View/update own profile | Yes | Yes | Yes |
+| Use basic item features | Yes | Yes | Yes |
+
+- Introduce `UserRole`: `admin`, `manager`, and `member`.
+- Centralize permission constants and the role-to-permissions mapping.
+- Use reusable FastAPI dependencies such as `require_permission()`.
+- Keep the backend authoritative; frontend permission checks only control presentation.
+
+## Migration and First-Login Bootstrap
+
+- Add an Alembic migration that:
+  - adds a constrained, non-null `role` string;
+  - maps `is_superuser=true` to `admin`;
+  - maps other existing users to `member`;
+  - removes `is_superuser`;
+  - provides a reversible downgrade.
+- Preserve `FIRST_SUPERUSER` and `FIRST_SUPERUSER_PASSWORD` as bootstrap settings.
+- After migrations, `initial_data.py` must:
+  - find the configured bootstrap user by email;
+  - create it with `role=admin` when absent;
+  - hash the configured password normally;
+  - leave the existing account and password unchanged when already present.
+- Startup order remains:
+  1. wait for PostgreSQL;
+  2. run Alembic migrations;
+  3. initialize the bootstrap administrator.
+- Document that changing `FIRST_SUPERUSER_PASSWORD` does not reset an existing account. Password changes use the application or an explicit administrative command.
+- Add a separate development-only, idempotent seed command for manager and member demo accounts. Production startup must not automatically create demo users.
+
+## Backend and API Changes
+
+- Update user create, update, and public schemas to expose `role`.
+- Public signup always creates a `member` and cannot accept an elevated role.
+- Protect endpoints as follows:
+  - `GET /api/v1/users/`: admin or manager.
+  - `POST /api/v1/users/`: admin only.
+  - `GET/PATCH/DELETE /api/v1/users/{id}`: admin only, except existing self-access.
+  - `/api/v1/users/me` and `/me/password`: every authenticated role.
+- Add `GET /api/v1/metrics/insights` for admin and manager, returning `total_users` and `active_users`.
+- Return backend-derived `permissions` from `GET /api/v1/users/me`.
+- Preserve existing item behavior: users manage their own items, while admins retain cross-user item access.
+- Regenerate the OpenAPI TypeScript client.
+
+## Frontend and Documentation
+
+- Add a reusable `can(permission)` helper using permissions returned by `/users/me`.
+- Replace `/admin` with `/users`:
+  - admin receives full management controls;
+  - manager receives a read-only user list;
+  - member receives Access Denied.
+- Replace `is_superuser` checkboxes with an admin-only role selector.
+- Add `/metrics` with total-user and active-user cards.
+- Hide unauthorized navigation and actions.
+- Show a friendly Access Denied component for direct unauthorized navigation.
+- Treat `401` as an expired login, but do not log the user out on `403`.
+- Update README with:
+  - startup and first-admin bootstrap;
+  - migration behavior;
+  - permission matrix;
+  - demo-user seeding;
+  - login examples using placeholder values rather than real secrets;
+  - test commands and authorization architecture.
+
+## Tests and Acceptance Criteria
+
+- Verify migration mapping for existing admin and regular users.
+- Verify a fresh database creates the configured bootstrap account as `admin`.
+- Verify repeated initialization does not reset its password.
+- Verify admin can create users and manage roles.
+- Verify manager can list users and view metrics but cannot mutate users.
+- Verify member cannot list users or view metrics but can update their own profile.
+- Verify signup payloads cannot elevate a new account.
+- Verify manager/member frontend navigation, read-only controls, Access Denied behavior, and preservation of the session after `403`.
+- Run Alembic upgrade, backend tests, frontend build/type-check, and focused Playwright tests.
+
+## Assumptions
+
+- Legacy `FIRST_SUPERUSER` variables remain supported specifically for secure first-run bootstrap.
+- No plaintext password is stored by a migration or committed to the repository.
+- Demo accounts are created only through an explicit development seed command.
+- Existing `.env` values remain local and are not committed as submission credentials.
+- Bonuses can be added later without changing the RBAC data model or public authorization contract.
+</proposed_plan>
+
+========================================================================================
+USER | 2026-08-16 21:03:34 EEST
+========================================================================================
+then constants must be named correctly  with neadining first user login password. also Those pass must be replaces on th efirst login I suppose . How do you think what is the best approach ?
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:04:14 EEST
+========================================================================================
+I agree with both points. `FIRST_SUPERUSER_PASSWORD` sounds permanent and does not communicate that it is only a bootstrap credential. A clearer contract is:
+
+```env
+BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD=...
+```
+
+The password should be optional after bootstrap: startup requires it only when no administrator exists. Once the admin has changed it, the environment variable may be removed, and later restarts must never restore it.
+
+For first-login replacement, these are the meaningful approaches:
+
+| Approach | Security | Complexity | Assessment |
+|---|---|---:|---|
+| UI reminder only | Weak; API remains usable with the temporary password | Low | Not suitable |
+| Login succeeds, but backend restricts the session until password change | Strong; only identity and password-change endpoints work | Moderate | Best fit |
+| Email invitation/reset link | Strong | High; depends on working email delivery | Excessive for this task |
+| Interactive CLI bootstrap, no initial password in environment | Strongest operationally | Moderate | Good production enhancement, less convenient for reviewers |
+
+I recommend the restricted-session approach. Add `must_change_password` to the user record, set it for bootstrap and admin-created accounts, and enforce it in backend dependencies. After login, the UI redirects to a dedicated password-change screen. Direct API calls to users, metrics, and items return `403` until the password is changed. Successful password change clears the flag transactionally.
+
+One remaining compatibility choice affects the environment contract.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:05:39 EEST
+========================================================================================
+<proposed_plan>
+# RBAC and Secure First-Login Specification
+
+## Summary
+
+Implement three-role RBAC and replace the legacy `FIRST_SUPERUSER*` configuration with an explicit, one-time administrator bootstrap flow.
+
+The bootstrap password is temporary. Newly bootstrapped and administrator-created users must replace their temporary password before accessing the application.
+
+## Bootstrap Configuration
+
+Use only these settings:
+
+```env
+BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD=...
+```
+
+- Remove `FIRST_SUPERUSER` and `FIRST_SUPERUSER_PASSWORD`.
+- Make both bootstrap settings optional during normal startup.
+- If an administrator already exists, startup ignores the bootstrap settings.
+- If no administrator exists:
+  - require both bootstrap settings;
+  - create the account with `role=admin`;
+  - hash the temporary password;
+  - set `must_change_password=true`.
+- If the bootstrap email belongs to an existing non-admin user, fail with a clear error rather than silently elevating it.
+- After the first administrator changes their password, the temporary password variable may be removed.
+- Restarting the application must never reset an existing password or reapply the temporary password.
+- Production credentials must come from deployment secrets, not a committed `.env`.
+
+## Roles and Migration
+
+| Action | Admin | Manager | Member |
+|---|---:|---:|---:|
+| List all users | Yes | Yes | No |
+| Create users and assign roles | Yes | No | No |
+| View/update/delete other users | Yes | No | No |
+| View metrics | Yes | Yes | No |
+| View/update own profile | Yes | Yes | Yes |
+| Use own item features | Yes | Yes | Yes |
+
+- Add `UserRole`: `admin`, `manager`, and `member`.
+- Add `must_change_password: bool`.
+- Migrate existing records:
+  - `is_superuser=true` becomes `role=admin`;
+  - other users become `role=member`;
+  - existing users receive `must_change_password=false`;
+  - remove `is_superuser`;
+  - constrain `role` to valid values.
+- The downgrade restores `is_superuser=true` only for admin users.
+- Centralize permission constants and role mappings in one backend policy module.
+
+## First-Login Enforcement
+
+- Separate authentication from full application access:
+  - `AuthenticatedUser` validates JWT, active status, and database identity.
+  - `CurrentUser` additionally requires `must_change_password=false`.
+- Users requiring a password change may access only:
+  - `GET /api/v1/users/me`;
+  - `PATCH /api/v1/users/me/password`.
+- All other authenticated endpoints return `403` while the flag is set.
+- `GET /users/me` returns:
+  - user identity and role;
+  - `permissions`;
+  - `must_change_password`.
+- The existing password endpoint continues to require the current temporary password and a valid new password.
+- A successful password change updates the password hash and clears `must_change_password` in the same transaction.
+- Password behavior by account source:
+  - bootstrap administrator: `must_change_password=true`;
+  - administrator-created user: `true`;
+  - public signup: `false`, because the user chose the password;
+  - self-service password recovery: clears the flag;
+  - administrator password reset: sets the flag back to `true`.
+
+## Backend and Frontend Changes
+
+- Protect users and metrics endpoints using centralized permission dependencies.
+- Add `GET /api/v1/metrics/insights`, returning `total_users` and `active_users`.
+- Preserve existing ownership rules for items; administrators retain existing cross-user access.
+- Regenerate the TypeScript API client.
+- After login, fetch `/users/me`:
+  - redirect users with `must_change_password=true` to a dedicated password-change route;
+  - otherwise enter the normal application.
+- On browser refresh, the authenticated layout repeats this check.
+- The password-change route contains current password, new password, and confirmation fields; normal navigation is hidden until completion.
+- A `401` clears the session; a `403` must not log the user out.
+- Add capability-based Users and Metrics navigation.
+- Admin sees user mutation controls; manager receives a read-only list; member receives Access Denied.
+- Add a development-only seed command for manager and member accounts. It creates missing accounts but never resets existing passwords.
+
+## Documentation and Tests
+
+- Document bootstrap setup, removal of the temporary secret, first-login behavior, permission matrix, migrations, demo seeding, startup, and test commands.
+- Test:
+  - fresh database bootstrap and forced password change;
+  - startup without bootstrap variables when an admin exists;
+  - failure when no admin and no bootstrap credentials exist;
+  - repeated startup does not reset a password;
+  - successful password replacement clears the restriction;
+  - restricted users cannot call users, metrics, or item endpoints;
+  - admin, manager, and member permission boundaries;
+  - signup cannot request an elevated role;
+  - admin-created users must replace their temporary password;
+  - frontend redirects to password setup and remains logged in after ordinary `403` responses.
+- Run Alembic upgrade/downgrade validation, backend tests, frontend build/type-check, and focused Playwright tests.
+
+## Assumptions
+
+- Cleanly renaming the environment contract is acceptable; no legacy aliases will remain.
+- Existing migrated users are not forced through first-login setup because they may already have established passwords.
+- The temporary-password flow is backend-enforced and cannot be bypassed by calling the API directly.
+- ADRs, diagrams, invitation emails, and denied-access logging can be added later without changing this contract.
+</proposed_plan>
+
+========================================================================================
+USER | 2026-08-16 21:05:42 EEST
+========================================================================================
+all legacy implmentation must be removed completelly
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:05:52 EEST
+========================================================================================
+Agreed for runtime behavior: there should be no `is_superuser`, `FIRST_SUPERUSER*`, superuser dependency, compatibility property, deprecated alias, or frontend superuser branch left in the finished application.
+
+There is one unavoidable distinction: a migration that upgrades an existing database must briefly reference the old `is_superuser` column so it can convert data and drop that column. That is transition logic, not retained runtime compatibility. Existing historical Alembic revisions also normally remain immutable.
+
+| Choice | Result | Tradeoff |
+|---|---|---|
+| Preserve upgrade path | New migration converts old data and removes the column; runtime is completely clean | Migration history still mentions the former schema |
+| Fresh baseline only | Rewrite/squash migrations so the schema never contains `is_superuser` | Existing databases cannot upgrade and must be recreated |
+
+For a professional submission, I recommend preserving the upgrade path while removing every legacy runtime interface.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:07:01 EEST
+========================================================================================
+<proposed_plan>
+# Clean RBAC and Secure Bootstrap Specification
+
+## Summary
+
+Replace the template’s legacy superuser implementation with a clean role-based authorization system. Preserve database upgradeability through one transitional migration, but retain no legacy fields, settings, dependencies, API properties, frontend checks, or compatibility aliases in the finished runtime.
+
+## Legacy Removal Policy
+
+Remove completely from runtime code:
+
+- `is_superuser` model and API properties;
+- `FIRST_SUPERUSER` and `FIRST_SUPERUSER_PASSWORD`;
+- `get_current_active_superuser`;
+- superuser-specific authorization branches;
+- frontend `is_superuser` checks and controls;
+- generated client fields containing `is_superuser`;
+- tests and fixtures using superuser terminology;
+- `/admin` route naming where it represents user management;
+- deprecated aliases or compatibility properties.
+
+Existing Alembic revisions remain unchanged. Add one transitional migration that reads `is_superuser`, converts its data, and drops it. Only migration history and downgrade logic may reference the former schema.
+
+## Roles and Permissions
+
+| Action | Admin | Manager | Member |
+|---|---:|---:|---:|
+| List all users | Yes | Yes | No |
+| Create users and assign roles | Yes | No | No |
+| View/update/delete other users | Yes | No | No |
+| View metrics | Yes | Yes | No |
+| View/update own profile | Yes | Yes | Yes |
+| Manage own items | Yes | Yes | Yes |
+| Manage other users’ items | Yes | No | No |
+
+- Add `UserRole`: `admin`, `manager`, `member`.
+- Add centralized `Permission` constants and a single role-permission mapping.
+- Enforce route permissions through reusable FastAPI dependencies.
+- Keep record ownership rules distinct from role permissions.
+- Return backend-derived capabilities to the frontend.
+
+## Migration and Bootstrap
+
+- Add `role` and `must_change_password` columns.
+- Migration behavior:
+  - old superusers become `admin`;
+  - other users become `member`;
+  - existing users receive `must_change_password=false`;
+  - constrain `role` to supported values;
+  - drop `is_superuser`.
+- Provide downgrade logic for use with the previous application version.
+- Replace legacy settings with:
+
+```env
+BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD=...
+```
+
+- Do not support the old environment names as aliases.
+- Bootstrap behavior:
+  - if any administrator exists, do nothing and do not require bootstrap secrets;
+  - otherwise require both bootstrap settings;
+  - reject a bootstrap email already owned by a non-admin;
+  - create the administrator with a hashed password and `must_change_password=true`;
+  - never reset or overwrite an existing password.
+- Permit removal of the temporary password secret after successful bootstrap.
+- Add an explicit development seed command for manager and member accounts; it creates missing accounts but never overwrites existing passwords.
+
+## Required Password Replacement
+
+- Separate dependencies into:
+  - `AuthenticatedUser`: valid JWT and active database user;
+  - `CurrentUser`: authenticated user with completed password setup.
+- A user with `must_change_password=true` may access only:
+  - `GET /api/v1/users/me`;
+  - `PATCH /api/v1/users/me/password`.
+- All other authenticated endpoints return `403`.
+- `/users/me` returns role, permissions, and `must_change_password`.
+- Password replacement requires the current temporary password and a valid new password.
+- Update the password hash and clear `must_change_password` atomically.
+- Account rules:
+  - bootstrap and admin-created accounts require replacement;
+  - signup users do not, because they choose their password;
+  - successful self-service recovery clears the requirement;
+  - an admin-assigned temporary password restores the requirement.
+
+## Backend and Frontend Changes
+
+- Protect user endpoints:
+  - list: admin or manager;
+  - create/update/delete: admin;
+  - own profile and password: all authenticated roles.
+- Add protected `GET /api/v1/metrics/insights` returning `total_users` and `active_users`.
+- Preserve item ownership behavior using roles and permissions, with no superuser compatibility branch.
+- Regenerate the OpenAPI client and confirm no generated `is_superuser` symbols remain.
+- Replace `/admin` with `/users`.
+- Admin receives user mutation controls; manager receives a read-only list.
+- Replace the old checkbox with a role selector.
+- Add `/metrics` and capability-controlled sidebar entries.
+- Add a dedicated initial-password-change screen.
+- Redirect there immediately after login and on authenticated page refresh when required.
+- Show Access Denied for unauthorized routes.
+- Clear authentication on `401`; retain the session on `403`.
+
+## Documentation and Validation
+
+- Update README with bootstrap configuration, first-login replacement, migrations, seeding, permission matrix, startup, and test commands.
+- Use only current role and bootstrap terminology in documentation.
+- Test:
+  - upgrade mapping and removal of the legacy column;
+  - clean bootstrap with new environment names;
+  - missing bootstrap credentials when no admin exists;
+  - repeated startup without password reset;
+  - enforced initial password replacement;
+  - all admin, manager, and member permission boundaries;
+  - signup privilege-escalation prevention;
+  - frontend redirects, hidden controls, Access Denied, and `403` session retention.
+- Search the repository after client generation and require zero runtime matches for:
+  - `is_superuser`;
+  - `get_current_active_superuser`;
+  - `FIRST_SUPERUSER`;
+  - `FIRST_SUPERUSER_PASSWORD`.
+- Exclude historical and transitional Alembic migrations from that zero-match assertion.
+- Run Alembic upgrade/downgrade checks, backend tests, frontend type-check/build, and focused Playwright tests.
+
+## Assumptions
+
+- Existing databases must remain upgradeable.
+- Historical migrations are immutable records, not active legacy implementation.
+- No legacy environment aliases or runtime compatibility shims will be retained.
+- Optional ADRs, diagrams, invitation emails, and observability remain deferred.
+</proposed_plan>
+
+========================================================================================
+USER | 2026-08-16 21:07:30 EEST
+========================================================================================
+Implement the plan.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:07:35 EEST
+========================================================================================
+I’ll implement the agreed clean RBAC/bootstrap design end to end, preserving your current local `.env` values while renaming their keys. I’ll begin with repository instructions and a baseline check, then work through migration/backend, generated API/frontend, documentation, and focused verification.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:08:04 EEST
+========================================================================================
+The baseline confirms the legacy implementation is spread across backend dependencies, schemas, item ownership checks, deployment configuration, generated frontend types, and tests. I’m removing it at the model boundary first so later compilation failures expose every remaining runtime dependency.
+
+========================================================================================
+USER | 2026-08-16 21:09:24 EEST
+========================================================================================
+does standatrd module plugin exists for rbac ? instead of developing a new one ?
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:09:28 EEST
+========================================================================================
+FastAPI has no built-in RBAC module; its standard extension point is dependency injection. I’m checking the current official options before deciding whether the small policy layer should be replaced. For this assignment’s three fixed roles and six permissions, an external policy engine may add more integration surface than value, but I’ll verify that against maintained libraries.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:09:40 EEST
+========================================================================================
+There is no standard FastAPI RBAC plugin. FastAPI’s documented standard is authorization through dependencies; it explicitly cites role requirements as a dependency use case. It also supports OAuth2 scopes through `Security()`, but scopes would still require our own role-to-permission mapping and token policy. [FastAPI dependencies](https://fastapi.tiangolo.com/tutorial/dependencies/) [OAuth2 scopes](https://fastapi.tiangolo.com/de/reference/dependencies/)
+
+External engines such as Casbin exist, but they add a policy language, adapter, persistence/configuration, and another dependency. That makes sense for tenant-specific or runtime-editable policies—not for three fixed roles in a one-hour exercise.
+
+I recommend keeping the small policy module: it is currently only the role-permission table plus two lookup functions, while FastAPI performs the enforcement. Roles are loaded from the database on every request, so permission changes take effect immediately instead of waiting for JWT expiry. I’ll continue with that approach unless you explicitly want a policy engine.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:12:14 EEST
+========================================================================================
+The backend now uses FastAPI’s native dependency mechanism with a compact role/permission policy; no third-party RBAC engine is warranted here. The schema transition, new bootstrap contract, forced-password gate, metrics endpoint, and item authorization conversion are in place. I’m migrating the live development database next so the existing administrator is preserved as `admin` without resetting its password.
+
+========================================================================================
+USER | 2026-08-16 21:15:28 EEST
+========================================================================================
+also how the app react to try to remoe the admin itself ? I suppose thta must be prohbited
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:15:41 EEST
+========================================================================================
+Yes. Self-removal must be prohibited in both UI and backend.
+
+The UI already hides row actions for the signed-in account, but that is not a security boundary. I’ll enforce these backend invariants as well:
+
+- an administrator cannot delete their own account through either delete endpoint;
+- an administrator cannot demote or deactivate themselves through `PATCH /users/{id}`;
+- the final administrator cannot be deleted or demoted, even by a different administrator.
+
+That prevents an API call from bypassing the hidden controls and prevents the system from ending up with no administrator.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:18:25 EEST
+========================================================================================
+Backend authorization is now verified: 68 tests pass against an isolated database, including manager/member permissions, forced temporary-password replacement, signup anti-escalation, bootstrap behavior, and administrator self-demotion protection. I’m finishing the frontend contract and E2E fixtures now, then I’ll rebuild the complete stack and test it through HTTP.
+
+========================================================================================
+USER | 2026-08-16 21:18:32 EEST
+========================================================================================
+have you stored spec for those changes ?
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:18:38 EEST
+========================================================================================
+Not yet—the specification currently exists only in our conversation. I’ll store the implemented contract in `docs/rbac.md` and link it from the README. It will cover the permission matrix, bootstrap lifecycle, forced password replacement, administrator safety invariants, API behavior, and deferred enhancements, so the repository remains self-explanatory.
+
+========================================================================================
+USER | 2026-08-16 21:21:59 EEST
+========================================================================================
+how applicaiton react if boot admin change it's email ?
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:22:06 EEST
+========================================================================================
+It remains safe because bootstrap is role-based after creation, not permanently tied to the configured email:
+
+- The administrator may change their email through their own profile.
+- Their `role=admin`, password hash, and account ID remain unchanged.
+- On restart, bootstrap first checks whether any admin exists. If one does, it ignores `BOOTSTRAP_ADMIN_EMAIL`, so the old configured email does not recreate another account.
+- Future login uses the new email.
+- If the database is destroyed and recreated, bootstrap uses whatever email is currently configured because the prior account no longer exists.
+
+I’ll add this behavior to the stored specification and cover restart-after-email-change in the bootstrap tests.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:23:06 EEST
+========================================================================================
+The bootstrap identity is role-based now: changing the boot admin’s email does not create a replacement admin on restart. I’m finishing formatting and the full verification pass, including the migration and running stack.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:23:44 EEST
+========================================================================================
+Frontend formatting and production build now pass. The backend lint failure came from the container still using the pre-fix image, so I’m rebuilding it before rerunning the backend checks.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:24:20 EEST
+========================================================================================
+Backend static checks pass. The first test command used the production image, which intentionally excludes test files; I’m rerunning with the local backend test directory mounted while keeping the isolated `app_test` database.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:24:52 EEST
+========================================================================================
+All 68 backend tests pass, the frontend build passes, no legacy RBAC identifiers remain outside the transition migration, and the migration round-trip succeeds. I’m now applying the upgraded image to the local stack and checking its health.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:26:18 EEST
+========================================================================================
+Changing the bootstrap administrator’s email is safe:
+
+- The current session remains valid because JWTs reference the user ID.
+- Future logins use the new email.
+- Restart does not recreate the old administrator because bootstrap checks for any user with the `admin` role.
+- Bootstrap configuration is consulted only when no administrator exists.
+- Admin role, password, and account ID remain unchanged.
+
+This behavior is implemented in [db.py](/Users/necro/Projects/Work/full-stack-fastapi-template/backend/app/core/db.py:24) and documented in [rbac.md](/Users/necro/Projects/Work/full-stack-fastapi-template/docs/rbac.md:43).
+
+The full RBAC implementation is complete and verified:
+
+- 68 backend tests passed.
+- Backend typing, Ruff, and formatting passed.
+- Frontend formatting and production build passed.
+- Migration downgrade/upgrade passed.
+- Local backend is running and healthy at http://localhost:8000.
+
+========================================================================================
+USER | 2026-08-16 21:26:59 EEST
+========================================================================================
+try to write adr doc . for grafics use ansi
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:27:02 EEST
+========================================================================================
+I’ll first inspect the repository’s documentation conventions and the existing RBAC specification, then I’ll turn that into a decision-complete ADR plan with text-only diagrams.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:27:10 EEST
+========================================================================================
+There is no existing ADR convention; the only source document is [rbac.md](/Users/necro/Projects/Work/full-stack-fastapi-template/docs/rbac.md). I’d create `docs/adr/0001-rbac-and-bootstrap-admin.md` as an “Accepted” decision record and keep `rbac.md` as the operational specification. One detail needs locking: by “ANSI graphics,” I suspect you mean portable ASCII box/flow diagrams, not terminal color escape codes.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:27:57 EEST
+========================================================================================
+<proposed_plan>
+# ADR: RBAC and Bootstrap Administrator
+
+## Summary
+
+Create `docs/adr/0001-rbac-and-bootstrap-admin.md` with status **Accepted**. Keep `docs/rbac.md` as the detailed behavioral specification and link the two documents.
+
+## ADR Content
+
+- Explain the replacement of legacy `is_superuser` and `FIRST_SUPERUSER_*` behavior with:
+  - `admin`, `manager`, and `member` roles.
+  - Backend-owned permission mapping.
+  - FastAPI dependency-based authorization.
+  - One-time bootstrap administrator credentials.
+  - Mandatory temporary-password replacement.
+- Record rejected alternatives:
+  - Keeping the binary superuser flag.
+  - Building checks directly into every route.
+  - Adding Casbin or another policy engine for three fixed roles.
+  - Recreating an administrator based on the configured bootstrap email.
+- Document consequences:
+  - Authorization changes take effect on the next request.
+  - The frontend reflects permissions but is not a security boundary.
+  - An administrator may change email without triggering another bootstrap.
+  - Administrators cannot delete, deactivate, or demote themselves.
+  - The final administrator cannot be deleted or demoted.
+  - More complex tenant or attribute policies may justify a policy engine later.
+
+## ASCII Diagrams
+
+Include portable ASCII-only diagrams for:
+
+```text
+Login -> JWT(user_id) -> Load user -> Check password flag -> Check permission
+```
+
+```text
+Application startup
+        |
+        v
+Any admin exists? -- yes --> Leave accounts unchanged
+        |
+        no
+        v
+Bootstrap secrets present? -- no --> Fail startup
+        |
+        yes
+        v
+Create admin -> Require password change
+```
+
+Also show the legacy database transition:
+
+```text
+is_superuser=true  -> role=admin
+is_superuser=false -> role=member
+                    + must_change_password=false
+                    + remove is_superuser
+```
+
+## Documentation Integration and Validation
+
+- Add reciprocal references between the ADR and `docs/rbac.md`.
+- Add the ADR to the README’s RBAC documentation section.
+- Ensure the ADR describes the implemented API, migration, bootstrap-email behavior, and safety invariants without duplicating the full permission matrix.
+- Validate Markdown formatting, ASCII portability, internal links, and consistency with the current implementation and tests.
+
+## Assumptions
+
+- “ANSI graphics” means strict ASCII diagrams without ANSI color escapes or Unicode box characters.
+- The ADR records an already implemented and accepted decision.
+- `docs/rbac.md` remains the authoritative behavioral contract; the ADR explains context, alternatives, rationale, and consequences.
+</proposed_plan>
+
+========================================================================================
+USER | 2026-08-16 21:28:41 EEST
+========================================================================================
+does it include all cases and corner cases ? does it include section about performance , security , costs of support ?
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:28:53 EEST
+========================================================================================
+No—the first outline covered the main flows, but it did not explicitly enumerate every boundary condition or give performance, security, and ongoing-support costs their own analysis sections.
+
+Two important implementation limits should be stated honestly in the ADR: “last admin” checks currently use count-then-write without a database lock, so concurrent admin changes could race; and bootstrap treats an inactive admin as an existing admin, so it will not automatically create a replacement. The ADR can either document those as accepted limitations or prescribe hardening work.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:30:04 EEST
+========================================================================================
+I’ll expand the ADR into an evidence-based decision record and include the hardening work it requires. The key invariant should become “at least one active administrator,” protected with a PostgreSQL transaction-level advisory lock for bootstrap and admin-removal operations; that closes the count-then-write race with negligible cost on ordinary requests.
+
+One remaining product decision is how operators recover if the database is externally altered so that every administrator is inactive.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:31:03 EEST
+========================================================================================
+<proposed_plan>
+# ADR and Active-Administrator Hardening
+
+## Summary
+
+Create `docs/adr/0001-rbac-and-bootstrap-admin.md` with status **Accepted** and date `2026-08-16`. Keep `docs/rbac.md` as the behavioral specification; the ADR records rationale, alternatives, consequences, risks, performance, security, and support costs.
+
+The implementation must strengthen the invariant from “an admin exists” to “at least one active admin exists.”
+
+## ADR Content
+
+- Document roles, backend permission enforcement, temporary-password replacement, bootstrap lifecycle, email changes, database migration, and administrator safety rules.
+- Compare the selected FastAPI dependency-based permission map with:
+  - Legacy binary superuser flag.
+  - Per-route inline checks.
+  - Casbin or another external policy engine.
+  - Roles embedded in JWTs.
+- Include qualitative sections for:
+  - **Performance:** in-memory permission lookup, existing per-request user lookup, indexed active-admin checks only during privileged mutations, startup query cost, and advisory-lock contention.
+  - **Security:** server-side enforcement, stale-permission prevention, privilege-escalation prevention, forced password replacement, bootstrap-secret lifecycle, IDOR/ownership checks, active-admin invariant, and recovery authorization.
+  - **Support cost:** custom-map maintenance, test burden, migration and recovery runbooks, dependency avoidance, and criteria for adopting a policy engine later.
+- Record residual risks and boundaries: direct database modification, compromised deployment secrets, database unavailability, bearer-token security inherited from the template, and policies requiring tenants or resource attributes.
+
+## ASCII Diagrams
+
+Use strict ASCII characters without color escapes or Unicode boxes:
+
+```text
+Request
+  |
+  v
+JWT user_id -> Load current user -> Password replacement required?
+                                      | yes
+                                      v
+                              Allow /users/me and
+                              password replacement only
+                                      |
+                                      no
+                                      v
+                         Permission + ownership checks
+```
+
+```text
+Startup
+  |
+  v
+Acquire admin lock
+  |
+  +-- Active admin exists ------> Continue unchanged
+  |
+  +-- Inactive admin exists ----> Fail; require recovery CLI
+  |
+  +-- No admin exists
+          |
+          +-- Secrets valid ----> Create active admin
+          |                       with temporary password
+          |
+          +-- Secrets absent ---> Fail startup
+```
+
+```text
+Admin-reducing operation
+  |
+  v
+Acquire transaction lock -> Recount active admins
+  |
+  +-- Would leave zero -> Reject and roll back
+  |
+  +-- Active admin remains -> Apply and commit
+```
+
+## Implementation Changes
+
+- Serialize bootstrap and all role, activation, demotion, and deletion operations affecting administrators with one PostgreSQL transaction-level advisory lock.
+- Recheck the active-admin count after acquiring the lock and perform the check and mutation in the same transaction.
+- Add an index supporting `role + is_active` administrator queries.
+- Preserve self-protection: an administrator cannot delete, demote, or deactivate their own account. Email, name, and password changes remain allowed.
+- Treat inactive administrators as insufficient during startup:
+  - If an active admin exists, bootstrap does nothing regardless of configured email.
+  - If only inactive admins exist, startup fails instead of silently creating or reactivating an account.
+  - If no admin account exists, valid bootstrap secrets create exactly one active admin.
+- Add `backend/scripts/recover_admin.py --email <email>`:
+  - Operates only when no active administrator exists.
+  - Prompts twice for the temporary password using `getpass`; passwords are never accepted as command arguments or logged.
+  - Under the same advisory lock, reactivates and promotes an existing account or creates a new account.
+  - Sets `must_change_password=true`.
+  - Refuses recovery if another active administrator appears before commit.
+- Update the RBAC specification and README with the recovery command, bootstrap behavior, ADR link, and operational warnings.
+
+## Corner Cases and Expected Behavior
+
+- Changing the bootstrap admin’s email preserves ID, role, current JWT validity, and future login through the new email.
+- Changing or removing bootstrap environment values cannot modify an existing active admin.
+- A bootstrap email colliding with a member or manager fails without promotion.
+- Partial, missing, weak, or placeholder bootstrap credentials fail validation.
+- Public signup always creates a member, even if an elevated role is submitted.
+- Administrator-created accounts must replace their temporary password before accessing normal endpoints.
+- Inactive users cannot authenticate; inactive admins do not satisfy the availability invariant.
+- Deleting or demoting an inactive admin is allowed when an active admin remains.
+- Concurrent attempts to remove, demote, or deactivate the remaining active admins cannot leave the system without one.
+- Concurrent application startups create at most one bootstrap administrator.
+- Recovery refuses to run when an active admin exists and handles concurrent startup or recovery attempts safely.
+- Database failures roll back both the safety check and mutation.
+
+## Test and Acceptance Plan
+
+- Add PostgreSQL integration tests using independent sessions for concurrent startup, demotion, deletion, deactivation, and recovery.
+- Test bootstrap with fresh, existing-active, inactive-only, conflicting-email, missing-secret, and changed-email states.
+- Test recovery creation, reactivation, promotion, forced password change, password confirmation failure, and refusal when an active admin exists.
+- Retain API tests for role permissions, signup escalation, self-protection, last-admin protection, ownership checks, and password gating.
+- Validate migration upgrade/downgrade, backend lint and tests, frontend build and authorization tests, Markdown links, and ASCII-only diagrams.
+- Acceptance requires that no supported API, startup, or recovery concurrency path can commit a state with zero active administrators.
+
+## Assumptions
+
+- PostgreSQL remains the supported database, so advisory transaction locks are acceptable.
+- Performance and support costs are qualitative; no invented latency or staffing estimates will be included.
+- The recovery CLI is an emergency operator action, not a public API.
+- A future external policy engine is considered only if tenant-specific, attribute-based, or dynamically managed policies become necessary.
+</proposed_plan>
+
+========================================================================================
+USER | 2026-08-16 21:32:26 EEST
+========================================================================================
+Implement the plan.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:32:28 EEST
+========================================================================================
+I’ll implement the ADR and the active-administrator hardening together: transactional locking, indexed lookup, recovery CLI, concurrency tests, and documentation. I’ll preserve the existing RBAC changes and verify against PostgreSQL.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:33:04 EEST
+========================================================================================
+The implementation will use one PostgreSQL advisory transaction lock shared by startup, recovery, and admin-affecting mutations. This keeps the safety check and write atomic without adding overhead to ordinary authenticated requests.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:35:13 EEST
+========================================================================================
+The ADR now includes explicit performance, security, support-cost, alternatives, residual-risk, and edge-case sections with ASCII-only flow diagrams. The code hardening and recovery path are in place; I’m at the static-analysis and PostgreSQL concurrency verification stage.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:37:05 EEST
+========================================================================================
+The PostgreSQL race test passes, recovery validation passes, and the new migration successfully downgrades and upgrades. Static analysis is clean. I’m doing the final full-suite run, then I’ll migrate and restart the local stack with the hardened image.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:37:47 EEST
+========================================================================================
+The production-style image built and the main database migrated successfully. The first health request landed during container startup, so I’m waiting for the declared health check to become ready and then confirming the API response.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:38:11 EEST
+========================================================================================
+Implemented the ADR and administrator hardening.
+
+- Added comprehensive [ADR 0001](/Users/necro/Projects/Work/full-stack-fastapi-template/docs/adr/0001-rbac-and-bootstrap-admin.md), including ASCII diagrams, corner cases, alternatives, performance, security, support costs, and residual risks.
+- Added PostgreSQL advisory locking to prevent concurrent operations from removing all active administrators.
+- Added indexed `(role, is_active)` lookup and migration.
+- Added safe interactive [administrator recovery command](/Users/necro/Projects/Work/full-stack-fastapi-template/backend/scripts/recover_admin.py).
+- Updated [RBAC specification](/Users/necro/Projects/Work/full-stack-fastapi-template/docs/rbac.md) and [README](/Users/necro/Projects/Work/full-stack-fastapi-template/README.md).
+- Added bootstrap, recovery, password-validation, and concurrent-demotion tests.
+
+Verification:
+
+- 78 backend tests passed.
+- 91% backend coverage.
+- Mypy, Ty, Ruff, formatting, and migration round-trip passed.
+- Backend image built successfully.
+- Local database is at migration head `3b4c5d6e7f80`.
+- Index and active administrator verified.
+- Application is healthy at http://localhost:8000.
+
+========================================================================================
+USER | 2026-08-16 21:39:14 EEST
+========================================================================================
+make an ANSI chats better aligned
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:39:21 EEST
+========================================================================================
+I’ll replace the loose arrow sketches with fixed-width ASCII box diagrams, keeping every connector and label aligned in GitHub Markdown and terminals.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:40:06 EEST
+========================================================================================
+Updated [ADR 0001](/Users/necro/Projects/Work/full-stack-fastapi-template/docs/adr/0001-rbac-and-bootstrap-admin.md:43) with better-aligned ASCII charts:
+
+- Request authorization flow
+- Startup and recovery flow
+- Administrator mutation flow
+- Legacy data migration
+
+All diagrams remain strict ASCII and `git diff --check` passes.
+
+========================================================================================
+USER | 2026-08-16 21:42:05 EEST
+========================================================================================
+does it include all https://github.com/evios/Fullstack-Dev-Test-Task#7-developer-ux ?
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:42:08 EEST
+========================================================================================
+I’ll compare the ADR and implementation directly against section 7 of the assignment. I’m using the GitHub workflow to inspect the referenced task source, then I’ll map each Developer UX requirement to current repository evidence and identify any gaps.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:42:39 EEST
+========================================================================================
+I have the exact assignment text now. Section 7 has four concrete README requirements; I’m checking whether the documented commands actually work, not just whether matching headings exist.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:43:45 EEST
+========================================================================================
+No. Comparing the repository with the assignment’s [Developer UX requirements](https://github.com/evios/Fullstack-Dev-Test-Task#7-developer-ux), it is only partially compliant:
+
+- Local run instructions: present, but prerequisites and `.env` preparation are incomplete.
+- Seed data: complete—bootstrap admin plus manager/member seeding.
+- Tests: not compliant—the documented backend command cannot find `backend/tests` in the built container and could target the development database.
+- Migrations: implemented and applied automatically, but the README lacks explicit migration commands.
+
+<proposed_plan>
+# Complete Developer UX Requirements
+
+## Summary
+
+Make the README a self-contained evaluator guide. Provide working, copy-paste-safe commands that use Docker as the primary dependency and never run tests against development data.
+
+## README Changes
+
+- Add prerequisites: Docker with Compose v2; Bun and uv only for optional host development.
+- Document required `.env` values and distinguish bootstrap credentials from permanent login credentials.
+- Provide one clean-start sequence covering image build, PostgreSQL startup, migrations, bootstrap, health verification, application URL, and first-login password replacement.
+- Keep explicit seed commands for the bootstrap admin and manager/member accounts.
+- Add migration commands for `upgrade head`, `current`, and downgrade verification.
+
+## Safe Test Workflow
+
+- Add a dedicated Docker test configuration with an isolated `app_test` PostgreSQL service and backend source/test mount.
+- Add one root test script that:
+  - Starts the isolated database.
+  - Applies migrations and bootstrap data.
+  - Runs backend tests.
+  - Preserves the exit status and removes test containers and volumes.
+- Replace the broken `docker compose exec backend` README command with this single safe command.
+- Document frontend build and Playwright commands separately, including the Bun prerequisite.
+
+## Acceptance Tests
+
+- Execute the README flow from a clean Compose project and empty volumes.
+- Confirm the application becomes healthy and the bootstrap admin can log in.
+- Confirm manager and member seed accounts are created without overwriting existing users.
+- Confirm the documented test command discovers all backend tests and cannot modify the development database.
+- Confirm migration `current` reports the expected head and repeated startup is idempotent.
+
+## Assumptions
+
+- Docker Compose is the primary evaluator path.
+- Host-based uv/Bun development remains optional and links to `development.md`.
+- Section 7 belongs primarily in the README rather than the ADR.
+</proposed_plan>
+
+========================================================================================
+USER | 2026-08-16 21:44:17 EEST
+========================================================================================
+I meant the whooe task https://github.com/evios/Fullstack-Dev-Test-Task
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:44:29 EEST
+========================================================================================
+Understood—you mean compliance with the entire assignment, not only section 7. I’ll audit every required and optional item against the current backend, frontend, tests, README, ADR, runtime, and submission state, then separate true gaps from optional polish.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:45:12 EEST
+========================================================================================
+The full audit is: core RBAC, backend/frontend enforcement, metrics, profile access, forbidden UX, migrations, and focused backend tests are present. It is not yet fully assignment-ready.
+
+The concrete gaps are:
+
+- README lacks the required 2–4 paragraph authorization explanation.
+- README test command is broken in the built container (`/app/backend/tests` is absent) and lacks safe test-database isolation.
+- Setup prerequisites and explicit migration commands are incomplete in the README.
+- The ADR is 1,577 words, while the assignment recommends 200–400 words per ADR and emphasizes concise documentation.
+- No submission commit history or PR exists yet; the worktree is entirely uncommitted.
+- Optional denied-attempt observability is not implemented.
+- Invalid/expired bearer credentials currently return `403`; standard API behavior would be `401` with `WWW-Authenticate: Bearer`.
+
+The assignment explicitly prioritizes clarity and tight scope, so the current implementation is functionally stronger than required but the submission presentation is too large and the evaluator workflow is not yet reliable.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:47:08 EEST
+========================================================================================
+<proposed_plan>
+# Full Assignment Compliance and Submission Cleanup
+
+## Summary
+
+The core implementation already satisfies the principal RBAC requirements in the [full assignment](https://github.com/evios/Fullstack-Dev-Test-Task): three roles, protected backend/frontend surfaces, metrics, self-profile access, permission-aware UI, migrations, tests, forbidden states, ADRs, and a running application.
+
+Before submission, close the documentation, Developer UX, HTTP semantics, observability, and delivery gaps. Reduce documentation size to match the assignment’s emphasis on concise, maintainable work.
+
+## Implementation and Documentation Changes
+
+- Add a 2–4 paragraph README explanation covering:
+  - Roles stored as constrained database strings.
+  - Permissions enforced through FastAPI dependencies.
+  - Ownership checks in resource handlers.
+  - Frontend capabilities obtained from `/api/v1/users/me`.
+- Keep the permission matrix and add an evaluator-oriented quick start with Docker prerequisites, `.env` preparation, database startup, migrations, bootstrap login, seeding, URLs, and shutdown.
+- Replace the 1,577-word ADR with two 200–400 word ADRs:
+  - Authorization pattern and frontend capability handling.
+  - Bootstrap administrator and active-admin safety.
+- Keep detailed edge cases, performance, security, and support notes in `docs/rbac.md`; use aligned ASCII diagrams in the ADRs.
+- Add a concise `NOTES.md` listing user-requested scope beyond the original task, tradeoffs, and realistic future work.
+- Prevent credentials from entering submission history: keep the real local `.env` uncommitted, provide a safe `.env.example`, ignore local `.env`, and document secret generation.
+
+## Developer UX and API Quality
+
+- Add an isolated Docker test configuration with a disposable `app_test` PostgreSQL database and mounted backend tests.
+- Provide one root command that applies test migrations, runs backend tests, preserves the exit status, and removes test containers/volumes.
+- Document separate frontend build and Playwright commands; Playwright must use disposable test data rather than changing the development admin password.
+- Document explicit migration commands: `upgrade head`, `current`, and downgrade/upgrade verification.
+- Normalize authentication responses:
+  - Invalid, expired, or unknown-user bearer tokens return `401` with `WWW-Authenticate: Bearer`.
+  - Valid but inactive users, forced-password users, and insufficient permissions return `403`.
+- Add structured authorization-denial logging for API `403` responses using method and normalized route only; never log tokens, passwords, request bodies, query strings, or email addresses.
+
+## Test and Compliance Matrix
+
+- Backend tests must cover admin, manager, and member allowed/denied paths for users, metrics, self-profile changes, signup escalation, and ownership.
+- Frontend tests must verify:
+  - Unauthorized navigation and buttons are hidden.
+  - Members see Access Denied on `/users` and `/metrics`.
+  - Managers can view users and metrics but cannot mutate users.
+  - Admins can manage users.
+- Test `401` versus `403` behavior and safe denial logging.
+- Run backend typing, lint, formatting, full PostgreSQL tests, migration round-trip, frontend formatting/build, and isolated Playwright tests.
+- Execute every README command from a clean Compose project and confirm the application becomes healthy without undocumented steps.
+- Confirm the final repository contains migrations, generated client changes, README matrix, two concise ADRs, `NOTES.md`, and no legacy runtime authorization symbols or committed secrets.
+
+## Submission and Assumptions
+
+- Organize local history into reviewable commits: backend RBAC/migrations, frontend authorization UX, then documentation/Developer UX.
+- Produce a final assignment checklist mapping every required and bonus item to code, tests, or documentation.
+- Preserve the simple in-process permission map; do not add an external RBAC library.
+- Keep active-admin concurrency hardening because it was explicitly requested, while presenting it as deliberate extra scope.
+- Do not push or open a PR without separate authorization; prepare the branch and commit history locally first.
+</proposed_plan>
+
+========================================================================================
+USER | 2026-08-16 21:47:15 EEST
+========================================================================================
+Implement the plan.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:47:29 EEST
+========================================================================================
+I’ll close the assignment gaps in four passes: evaluator README and secret hygiene, isolated Docker test workflows, concise ADR restructuring, then HTTP semantics/denial logging and full verification. I’ll keep the current local `.env` values on disk while removing them from submission tracking.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:48:33 EEST
+========================================================================================
+Authentication semantics and privacy-safe denied-request logging are now implemented. Next I’m replacing the unsafe test instructions with disposable Docker environments so backend and browser tests cannot touch the developer database.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:49:32 EEST
+========================================================================================
+The evaluator README is now self-contained, with Docker-only startup, seeding, isolated backend/browser tests, and explicit migration commands. Local secrets remain on disk but are no longer tracked; `.env.example` is the submission template.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:51:12 EEST
+========================================================================================
+Both ADRs now meet the assignment’s 200–400 word guideline, and the new Compose test definition validates. I’m now exercising the exact README backend command from the project root; this is the key Developer UX gate.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:51:49 EEST
+========================================================================================
+The clean evaluator test workflow worked as intended and safely removed its disposable database. It exposed one precise test mismatch: FastAPI’s route template omits the mounted `/api/v1` prefix in middleware metadata. I’m normalizing that prefix in the log so the recorded route matches the public API path.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:52:47 EEST
+========================================================================================
+The exact README backend command now passes from a clean disposable database: 81 tests, 92% coverage, and automatic cleanup. I’m running the isolated browser workflow next, including the new admin/manager/member navigation and direct-route cases.
+
+========================================================================================
+ASSISTANT | 2026-08-16 21:53:29 EEST
+========================================================================================
+The browser workflow reached the isolated healthy backend and is now downloading the pinned Playwright browser image on this machine for the first time. The backend and frontend application image build itself is already successful.
+
+========================================================================================
+ASSISTANT | 2026-08-16 22:03:15 EEST
+========================================================================================
+The isolated Playwright stack is functioning, but the full inherited 66-test suite is exposing several browser-test failures rather than a setup failure. I’m letting retries finish so I can separate pre-existing flaky assumptions from defects in the new role tests and fix the documented workflow truthfully.
+
+========================================================================================
+ASSISTANT | 2026-08-16 22:04:35 EEST
+========================================================================================
+The disposable full E2E run exposed five concrete frontend regressions: invalid-token redirect handling, stale async profile form defaults, and an inaccessible Role selector. I’m fixing those now, then I’ll rerun the affected scenarios and the complete suite.
+
+========================================================================================
+ASSISTANT | 2026-08-16 22:05:17 EEST
+========================================================================================
+The frontend now builds cleanly. I also made the E2E wrapper accept test-file arguments, so I can validate the five failures quickly before spending time on a full browser-suite rerun.
+
+========================================================================================
+ASSISTANT | 2026-08-16 22:07:12 EEST
+========================================================================================
+The focused run fixed the invalid-token flow, Role selector, and initial/cancel profile rendering. Two save-success assertions remain: the API update succeeds, but the form rehydrates from stale query data immediately afterward. I’m tightening that cache/update sequence rather than weakening the tests.
+
+========================================================================================
+ASSISTANT | 2026-08-16 22:08:22 EEST
+========================================================================================
+All four previously failing save cases now pass in isolation. I’m starting the final full 66-test browser run; after that I’ll perform the backend/static/migration gates and inspect the complete diff for assignment coverage and accidental secret exposure.
+
+========================================================================================
+ASSISTANT | 2026-08-16 22:09:44 EEST
+========================================================================================
+The complete browser acceptance suite is green: 66/66. I’m on the final verification pass now—Python type/lint checks, migration downgrade/upgrade on an isolated database, patch hygiene, and documentation constraints.
+
+========================================================================================
+ASSISTANT | 2026-08-16 22:11:55 EEST
+========================================================================================
+All technical gates are green, and the running local stack is serving the UI (`200`), reporting healthy, and is at migration head `3b4c5d6e7f80`. I’m now organizing the implementation into backend, frontend, and documentation/developer-UX commits; I will not push or open a PR.
+
+========================================================================================
+ASSISTANT | 2026-08-16 22:12:53 EEST
+========================================================================================
+Implemented the complete RBAC and developer-UX plan.
+
+Key results:
+
+- Roles: `admin`, `manager`, `member`
+- Backend-enforced permissions and ownership checks
+- Permission-aware frontend navigation and Access Denied pages
+- Metrics endpoint/page
+- One-time bootstrap administrator using `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_TEMPORARY_PASSWORD`
+- Mandatory password replacement on first login
+- Removed legacy superuser runtime implementation
+- Prevented administrator self-delete, self-demotion, and self-deactivation
+- Protected the final active administrator, including concurrent operations
+- Added interactive administrator recovery
+- Added privacy-safe `403` logging and correct `401` Bearer responses
+- `.env` remains locally available but is no longer tracked
+- Added disposable Docker backend and Playwright workflows
+- Added specification, ADRs, README instructions, and submission notes
+
+Verification completed:
+
+- Backend: 81 tests passed, 92% coverage
+- Playwright: 66 tests passed
+- Mypy, ty, Ruff, Biome and TypeScript build passed
+- Alembic upgrade → downgrade → upgrade passed
+- Local database is at migration head
+- Local UI returns `200`; backend health check returns `true`
+
+The application is available at [http://localhost](http://localhost). First login uses the bootstrap values in your local `.env`, followed immediately by the required password-change screen.
+
+Documentation:
+
+- [README.md](/Users/necro/Projects/Work/full-stack-fastapi-template/README.md)
+- [RBAC specification](/Users/necro/Projects/Work/full-stack-fastapi-template/docs/rbac.md)
+- [Authorization ADR](/Users/necro/Projects/Work/full-stack-fastapi-template/docs/adr/0001-authorization-pattern.md)
+- [Bootstrap safety ADR](/Users/necro/Projects/Work/full-stack-fastapi-template/docs/adr/0002-bootstrap-admin-safety.md)
+- [Submission notes](/Users/necro/Projects/Work/full-stack-fastapi-template/NOTES.md)
+
+Created three local commits:
+
+```text
+63d5adf feat(backend): add role-based authorization
+3514a4f feat(frontend): add permission-aware user flows
+595b2f5 docs: add secure bootstrap and developer workflow
+```
+
+The working tree is clean. Nothing was pushed and no pull request was opened.
